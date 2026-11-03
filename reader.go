@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync/atomic"
 
-	eventadapter "github.com/NARUBROWN/spine/adapter/event"
+	eventadapter "github.com/NARUBROWN/spine/contract/event"
 	"github.com/segmentio/kafka-go"
 )
 

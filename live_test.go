@@ -10,7 +10,7 @@ import (
 	"time"
 
 	platform "github.com/NARUBROWN/spine-kafka-platform"
-	eventadapter "github.com/NARUBROWN/spine/adapter/event"
+	eventadapter "github.com/NARUBROWN/spine/contract/event"
 	"github.com/segmentio/kafka-go"
 )
 
