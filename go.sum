@@ -1,3 +1,5 @@
+github.com/NARUBROWN/spine v0.7.0-preview.1 h1:vbyF9/IN8lR3mhfR2CWFzJPX8SlEUDd5hRuYFd06f18=
+github.com/NARUBROWN/spine v0.7.0-preview.1/go.mod h1:A0JJcUelvcyn3DW+VkSTHJfvKBegrMNKfXCq8tbiXJ4=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/klauspost/compress v1.15.9 h1:wKRjX6JRtDdrE9qwa4b/Cip7ACOshUI4smpCQanqjSY=
