@@ -56,24 +56,24 @@ func consumeOne(ctx context.Context) error {
 | 필드 | 동작 |
 | --- | --- |
 | `Brokers` | 비어 있지 않은 브로커 주소 목록. 필수입니다. |
-| `Consume`, `Publish` | 읽기·발행 역할을 각각 활성화합니다. 하나 이상 필요합니다. |
+| `Consume`, `Publish` | 읽기, 발행 역할을 각각 활성화합니다. 하나 이상 필요합니다. |
 | `GroupID` | 소비를 활성화하면 필수입니다. |
 | `TopicPrefix` | 발행 이벤트 이름과 논리 구독 키 앞에 같은 접두사를 붙입니다. |
 | `TLS` | 공통 TLS 설정. 기본값은 TLS 1.2 이상입니다. |
-| `Dialer`, `Transport` | kafka-go의 읽기·발행 고급 설정. TLS와 설정 slice를 복사합니다. 사용자 콜백·SASL·resolver는 호출자가 안전하게 공유해야 합니다. |
+| `Dialer`, `Transport` | kafka-go의 읽기, 발행 고급 설정. TLS와 설정 slice를 복사합니다. 사용자 콜백, SASL, resolver는 호출자가 안전하게 공유해야 합니다. |
 | `AllowInsecureTransport` | 기본 false. 로컬 평문 연결을 명시적으로 허용하며 TLS 설정과 함께 사용할 수 없습니다. |
 | `StartupTimeout` | Reader metadata 준비 제한 시간. 기본 10초입니다. |
-| `WriteTimeout` | 발행 클라이언트 읽기·쓰기 제한 시간. 기본 10초입니다. |
+| `WriteTimeout` | 발행 클라이언트 읽기, 쓰기 제한 시간. 기본 10초입니다. |
 
-factory 생성과 Capabilities 조회는 네트워크를 사용하지 않습니다. NewReader는 실제 Kafka topic metadata를 요청한 뒤 반환하며, consumer group 참여와 첫 메시지 수신은 Read에서 진행합니다. NewPublisher는 전송 자원을 준비하고 실제 연결·대상 확인은 Publish에서 수행합니다. `Transport.Context`는 플랫폼이 자원 수명을 소유하도록 background context로 설정합니다.
+factory 생성과 Capabilities 조회는 네트워크를 사용하지 않습니다. NewReader는 실제 Kafka topic metadata를 요청한 뒤 반환하며, consumer group 참여와 첫 메시지 수신은 Read에서 진행합니다. NewPublisher는 전송 자원을 준비하고 실제 연결, 대상 확인은 Publish에서 수행합니다. `Transport.Context`는 플랫폼이 자원 수명을 소유하도록 background context로 설정합니다.
 
 ## 처리와 수명
 
 - 한 Reader에서 미확인 전달은 하나입니다. Ack는 동기 offset commit이며 Nack은 `eventadapter.ErrReaderInvalidated`를 반환합니다. 실패 offset보다 뒤의 offset을 읽거나 커밋하지 않도록 Reader를 닫고 다시 생성해야 합니다. ACK 오류도 같은 Reader를 더 읽지 못하게 합니다.
 - `Subscription.Topic`은 커널의 핸들러 선택 키입니다. 수신 Message.EventName에는 논리 구독 키를 넣고 Metadata에는 Kafka headers를 문자열로 담습니다. 같은 header key가 반복되면 마지막 값을 사용합니다.
-- 발행은 `RequiredAcks: RequireAll`을 사용합니다. 확인 실패·취소 뒤 재발행은 중복을 만들 수 있습니다. 소비 완료나 exactly-once를 보장하지 않습니다.
+- 발행은 `RequiredAcks: RequireAll`을 사용합니다. 확인 실패, 취소 뒤 재발행은 중복을 만들 수 있습니다. 소비 완료나 exactly-once를 보장하지 않습니다.
 - Read와 전달 확인은 직렬 호출합니다. Publish는 동시에 호출할 수 있습니다. payload와 메타데이터는 복사하며 binary 본문을 보존합니다.
-- Close는 새 작업을 막고 진행 중인 확인·발행이 끝난 뒤 자원을 한 번 정리합니다. Reader의 대기 중 Read는 취소됩니다. Close context는 완료 대기만 제한하며 다시 호출해 같은 정리 결과를 기다릴 수 있습니다.
+- Close는 새 작업을 막고 진행 중인 확인, 발행이 끝난 뒤 자원을 한 번 정리합니다. Reader의 대기 중 Read는 취소됩니다. Close context는 완료 대기만 제한하며 다시 호출해 같은 정리 결과를 기다릴 수 있습니다.
 - 생성 context를 성공 후 취소해도 반환된 자원은 유지됩니다. 생성 실패는 자원을 정리하고 nil 결과를 반환합니다.
 
 ## 검증
@@ -84,7 +84,7 @@ bash scripts/check-module-boundary.sh
 SPINE_TEST_KAFKA_BROKER=localhost:9092 go test -race . -run '^TestLive' -count=1 -timeout=2m
 ```
 
-브로커 환경변수가 없으면 live 테스트는 건너뜁니다. Live 테스트는 binary 본문·header 왕복과 Nack 후 실패 메시지의 재전달, 이어지는 메시지의 commit 순서를 검사합니다. CI는 단위·race 검사와 Redpanda 기반 live 검사를 분리해서 실행합니다. TLS/SASL 운영 환경은 별도로 검증해야 합니다.
+브로커 환경변수가 없으면 live 테스트는 건너뜁니다. Live 테스트는 binary 본문, header 왕복과 Nack 후 실패 메시지의 재전달, 이어지는 메시지의 commit 순서를 검사합니다. CI는 단위, race 검사와 Redpanda 기반 live 검사를 분리해서 실행합니다. TLS/SASL 운영 환경은 별도로 검증해야 합니다.
 
 라이선스: [MIT](LICENSE). 계약: [Spine adapter/event](https://github.com/NARUBROWN/spine/tree/1889d66/adapter/event).
 
