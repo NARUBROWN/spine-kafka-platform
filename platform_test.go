@@ -133,7 +133,7 @@ func (*fakeWriter) Close() error { return nil }
 
 func TestPublisherPreservesSerializedBytesAndMetadataOwnership(t *testing.T) {
 	native := &fakeWriter{}
-	p := &publisher{native: native, prefix: "dev-", life: newLifecycle(nil, native.Close)}
+	p := &publisher{native: native, destinations: map[string]string{"orders": "dev-orders"}, life: newLifecycle(nil, native.Close)}
 	message := eventadapter.Message{EventName: "orders", Payload: []byte{0, 255, 1}, Metadata: map[string]string{"trace": "123"}}
 	if err := p.Publish(context.Background(), message); err != nil {
 		t.Fatal(err)
@@ -143,6 +143,12 @@ func TestPublisherPreservesSerializedBytesAndMetadataOwnership(t *testing.T) {
 	got := native.messages[0]
 	if got.Topic != "dev-orders" || got.Value[0] != 0 || string(got.Headers[0].Value) != "123" {
 		t.Fatalf("입력 수명이 전송 메시지를 변경했습니다: %#v", got)
+	}
+	if err := p.Publish(context.Background(), eventadapter.Message{EventName: "unknown"}); !errors.Is(err, eventadapter.ErrInvalidAdapter) {
+		t.Fatalf("미등록 목적지를 거절해야 합니다: %v", err)
+	}
+	if len(native.messages) != 1 {
+		t.Fatal("미등록 목적지로 메시지를 썼습니다")
 	}
 	if err := p.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -156,7 +162,7 @@ func TestFactoryCopiesNativeConfigurationAndDoesNotConnect(t *testing.T) {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	brokers := []string{"unreachable.invalid:9092"}
 	transport := &kafka.Transport{MetadataTopics: []string{"orders"}, TLS: tlsConfig}
-	selected, err := NewFactory(Config{Brokers: brokers, Publish: true, Transport: transport})
+	selected, err := NewFactory(Config{Brokers: brokers, Publish: true, PublishDestinations: testDestinations{"orders"}, Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,4 +210,24 @@ func TestReadinessRejectsNonKafkaServiceAndHonorsDeadline(t *testing.T) {
 		t.Fatalf("단순 TCP 수신을 readiness로 인정했습니다: %v, %v", r, err)
 	}
 	<-done
+}
+
+type testDestinations []string
+
+func (d testDestinations) PublishDestinations() []string { return d }
+
+func TestFactoryValidatesPublishDestinations(t *testing.T) {
+	for name, source := range map[string]DestinationSource{
+		"missing":   nil,
+		"empty":     testDestinations{},
+		"invalid":   testDestinations{"orders created"},
+		"duplicate": testDestinations{"orders", "orders"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewFactory(Config{Brokers: []string{"localhost:9092"}, Publish: true, PublishDestinations: source})
+			if !errors.Is(err, eventadapter.ErrInvalidAdapter) {
+				t.Fatalf("잘못된 목록을 거절해야 합니다: %v", err)
+			}
+		})
+	}
 }
