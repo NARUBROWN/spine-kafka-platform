@@ -31,7 +31,7 @@ func TestLiveKafkaFailedDeliveryIsRedeliveredBeforeNextMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.DeleteTopics(topic)
-	f, err := platform.NewFactory(platform.Config{Brokers: []string{broker}, Consume: true, Publish: true, GroupID: topic, AllowInsecureTransport: true})
+	f, err := platform.NewFactory(platform.Config{Brokers: []string{broker}, Consume: true, Publish: true, PublishDestinations: liveDestinations{topic}, GroupID: topic, AllowInsecureTransport: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,3 +91,7 @@ func TestLiveKafkaFailedDeliveryIsRedeliveredBeforeNextMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type liveDestinations []string
+
+func (d liveDestinations) PublishDestinations() []string { return d }

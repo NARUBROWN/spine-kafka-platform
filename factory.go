@@ -6,12 +6,20 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
 	"slices"
 	"time"
 
 	eventadapter "github.com/NARUBROWN/spine/contract/event"
 	"github.com/segmentio/kafka-go"
 )
+
+// DestinationSource는 앱이 발행할 논리 목적지를 제공합니다.
+// Spine의 이벤트 계약과 같은 메서드로 정의해 기존 계약 버전에서도 쓸 수 있습니다.
+type DestinationSource interface {
+	PublishDestinations() []string
+}
 
 // Config는 Kafka 연결과 활성화할 역할을 명시합니다. 생성 시 네트워크에 연결하지 않습니다.
 type Config struct {
@@ -20,6 +28,7 @@ type Config struct {
 	Publish                bool
 	GroupID                string
 	TopicPrefix            string
+	PublishDestinations    DestinationSource
 	TLS                    *tls.Config
 	Dialer                 *kafka.Dialer
 	Transport              *kafka.Transport
@@ -28,9 +37,50 @@ type Config struct {
 	WriteTimeout           time.Duration
 }
 
-type factory struct{ config Config }
+type factory struct {
+	config       Config
+	destinations map[string]string
+}
 
-// NewFactory는 설정을 복사하고 검증합니다. 브로커 연결은 NewReader에서 시작합니다.
+var topicName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,249}$`)
+
+func resolveDestinations(config Config) (map[string]string, error) {
+	if !config.Publish {
+		return nil, nil
+	}
+	source := config.PublishDestinations
+	if source == nil || nilDestinationSource(source) {
+		return nil, fmt.Errorf("%w: set Config.PublishDestinations when publishing is enabled", eventadapter.ErrInvalidAdapter)
+	}
+	names := source.PublishDestinations()
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%w: Config.PublishDestinations returned no destinations", eventadapter.ErrInvalidAdapter)
+	}
+	destinations := make(map[string]string, len(names))
+	for _, name := range names {
+		topic := config.TopicPrefix + name
+		if !topicName.MatchString(name) || !topicName.MatchString(topic) || topic == "." || topic == ".." {
+			return nil, fmt.Errorf("%w: invalid Kafka destination %q (topic %q)", eventadapter.ErrInvalidAdapter, name, topic)
+		}
+		if _, exists := destinations[name]; exists {
+			return nil, fmt.Errorf("%w: duplicate Kafka destination %q", eventadapter.ErrInvalidAdapter, name)
+		}
+		destinations[name] = topic
+	}
+	return destinations, nil
+}
+
+func nilDestinationSource(source DestinationSource) bool {
+	value := reflect.ValueOf(source)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+// NewFactory는 설정을 복사하고 검증합니다. 브로커 연결은 NewReader 또는 NewPublisher에서 시작합니다.
 func NewFactory(config Config) (eventadapter.Factory, error) {
 	if len(config.Brokers) == 0 || (!config.Consume && !config.Publish) || (config.Consume && config.GroupID == "") {
 		return nil, fmt.Errorf("%w: brokers, enabled roles and consumer group must be configured", eventadapter.ErrInvalidAdapter)
@@ -46,6 +96,12 @@ func NewFactory(config Config) (eventadapter.Factory, error) {
 	if config.AllowInsecureTransport && (config.TLS != nil || (config.Dialer != nil && config.Dialer.TLS != nil) || (config.Transport != nil && config.Transport.TLS != nil)) {
 		return nil, fmt.Errorf("%w: TLS conflicts with insecure transport", eventadapter.ErrInvalidAdapter)
 	}
+	destinations, err := resolveDestinations(config)
+	if err != nil {
+		return nil, err
+	}
+	// 목록을 한 번 읽어 보관하고 발행자 재생성에도 같은 경로를 사용합니다.
+	config.PublishDestinations = nil
 	config.Brokers = slices.Clone(config.Brokers)
 	if config.StartupTimeout == 0 {
 		config.StartupTimeout = 10 * time.Second
@@ -67,7 +123,7 @@ func NewFactory(config Config) (eventadapter.Factory, error) {
 	}
 	config.Dialer = &dialer
 	config.Transport = cloneTransport(config)
-	return &factory{config: config}, nil
+	return &factory{config: config, destinations: destinations}, nil
 }
 
 func effectiveTLS(config Config) *tls.Config {
@@ -162,11 +218,46 @@ func (f *factory) NewPublisher(ctx context.Context) (eventadapter.Publisher, err
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
+	// 발행자 생성 전에 등록된 물리 토픽의 메타데이터를 확인합니다.
+	startupCtx, cancel := context.WithTimeout(ctx, f.config.StartupTimeout)
+	defer cancel()
+	topics := make([]string, 0, len(f.destinations))
+	for _, topic := range f.destinations {
+		topics = append(topics, topic)
+	}
+	slices.Sort(topics)
 	transport := cloneTransport(f.config)
-	native := &kafka.Writer{Addr: kafka.TCP(f.config.Brokers...), Balancer: &kafka.LeastBytes{},
+	address := kafka.TCP(f.config.Brokers...)
+	client := kafka.Client{Addr: address, Transport: transport}
+	if err := checkPublishTopics(startupCtx, &client, topics); err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	native := &kafka.Writer{Addr: address, Balancer: &kafka.LeastBytes{},
 		RequiredAcks: kafka.RequireAll, Transport: transport, WriteTimeout: f.config.WriteTimeout,
 		ReadTimeout: f.config.WriteTimeout}
-	p := &publisher{native: native, prefix: f.config.TopicPrefix}
+	p := &publisher{native: native, destinations: f.destinations}
 	p.life = newLifecycle(nil, func() error { err := native.Close(); transport.CloseIdleConnections(); return err })
 	return p, nil
+}
+
+func checkPublishTopics(ctx context.Context, client *kafka.Client, topics []string) error {
+	metadata, err := client.Metadata(ctx, &kafka.MetadataRequest{Topics: topics})
+	if err != nil {
+		return fmt.Errorf("prepare Kafka publish topics %v: %w", topics, err)
+	}
+	found := make(map[string]kafka.Topic, len(metadata.Topics))
+	for _, topic := range metadata.Topics {
+		found[topic.Name] = topic
+	}
+	for _, name := range topics {
+		topic := found[name]
+		if topic.Error != nil {
+			return fmt.Errorf("prepare Kafka publish topic %q: %w", name, topic.Error)
+		}
+		if len(topic.Partitions) == 0 {
+			return fmt.Errorf("prepare Kafka publish topic %q: no partitions in metadata", name)
+		}
+	}
+	return ctx.Err()
 }

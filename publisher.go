@@ -16,9 +16,9 @@ type messageWriter interface {
 }
 
 type publisher struct {
-	native messageWriter
-	prefix string
-	life   *lifecycle
+	native       messageWriter
+	destinations map[string]string
+	life         *lifecycle
 }
 
 func (p *publisher) Publish(ctx context.Context, message eventadapter.Message) error {
@@ -29,8 +29,9 @@ func (p *publisher) Publish(ctx context.Context, message eventadapter.Message) e
 		return err
 	}
 	defer p.life.leave()
-	if message.EventName == "" {
-		return fmt.Errorf("%w: event name is empty", eventadapter.ErrInvalidAdapter)
+	topic, registered := p.destinations[message.EventName]
+	if !registered {
+		return fmt.Errorf("%w: Kafka publish destination %q is not registered", eventadapter.ErrInvalidAdapter, message.EventName)
 	}
 	keys := make([]string, 0, len(message.Metadata))
 	for key := range message.Metadata {
@@ -41,7 +42,7 @@ func (p *publisher) Publish(ctx context.Context, message eventadapter.Message) e
 	for _, key := range keys {
 		headers = append(headers, kafka.Header{Key: key, Value: []byte(message.Metadata[key])})
 	}
-	return p.native.WriteMessages(ctx, kafka.Message{Topic: p.prefix + message.EventName,
+	return p.native.WriteMessages(ctx, kafka.Message{Topic: topic,
 		Value: slices.Clone(message.Payload), Time: message.OccurredAt, Headers: headers})
 }
 

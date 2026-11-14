@@ -21,8 +21,14 @@ import (
     kafkaplatform "github.com/NARUBROWN/spine-kafka-platform"
 )
 
+type orderDestinations struct{}
+
+func (orderDestinations) PublishDestinations() []string {
+    return []string{"orders.created"}
+}
+
 func buildWorker() (spine.App, error) {
-    factory, err := kafkaplatform.NewFactory(kafkaplatform.Config{Brokers: []string{"kafka.example.com:9093"}, Consume: true, Publish: true, GroupID: "orders"})
+    factory, err := kafkaplatform.NewFactory(kafkaplatform.Config{Brokers: []string{"kafka.example.com:9093"}, Consume: true, Publish: true, GroupID: "orders", PublishDestinations: orderDestinations{}})
     if err != nil { return nil, err }
     return spine.New(spine.WithEventAdapter("kafka", factory)), nil
 }
@@ -58,7 +64,7 @@ func consumeOne(ctx context.Context) error {
 }
 ```
 
-발행은 `Config.Publish: true`와 `factory.NewPublisher(ctx)`를 사용합니다. `Publish(ctx, eventadapter.Message{EventName: ..., Payload: ...})`에는 이미 직렬화한 본문을 넘깁니다. nil 본문도 허용하며 다시 JSON으로 변환하지 않습니다.
+이 소스의 발행 설정에는 `Config.Publish: true`와 `Config.PublishDestinations`가 필요합니다. `NewFactory`가 목록을 검증하고 `NewPublisher`가 등록된 Kafka 토픽의 메타데이터를 확인합니다. `Publish(ctx, eventadapter.Message{EventName: ..., Payload: ...})`에는 이미 직렬화한 본문을 넘깁니다. nil 본문도 허용하며 다시 JSON으로 변환하지 않습니다.
 
 ## 설정
 
@@ -67,6 +73,7 @@ func consumeOne(ctx context.Context) error {
 | `Brokers` | 비어 있지 않은 브로커 주소 목록. 필수입니다. |
 | `Consume`, `Publish` | 읽기, 발행 역할을 각각 활성화합니다. 하나 이상 필요합니다. |
 | `GroupID` | 소비를 활성화하면 필수입니다. |
+| `PublishDestinations` | 발행을 활성화하면 필수입니다. `PublishDestinations() []string`으로 논리 이름 목록을 제공합니다. |
 | `TopicPrefix` | 발행 이벤트 이름과 논리 구독 키 앞에 같은 접두사를 붙입니다. |
 | `TLS` | 공통 TLS 설정. 기본값은 TLS 1.2 이상입니다. |
 | `Dialer`, `Transport` | kafka-go의 읽기, 발행 고급 설정. TLS와 설정 slice를 복사합니다. 사용자 콜백, SASL, resolver는 호출자가 안전하게 공유해야 합니다. |
